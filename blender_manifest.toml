@@ -2,8 +2,8 @@ schema_version = "1.0.0"
 
 id = "blendswap_browser"
 version = "0.2.1"
-name = "Blend Swap Browser"
-tagline = "Search, download and import Blend Swap assets"
+name = "BlendSwap Browser"
+tagline = "Search, download and import BlendSwap assets"
 maintainer = "Jace Whitten"
 type = "add-on"
 
@@ -15,6 +15,6 @@ blender_version_min = "4.2.0"
 
 license = ["SPDX:GPL-3.0-or-later"]
 
-# The add-on talks to the Blend Swap REST API to search and fetch assets.
+# The add-on talks to the BlendSwap REST API to search and fetch assets.
 [permissions]
-network = "Search and download assets from the Blend Swap API"
+network = "Search and download assets from the BlendSwap API"

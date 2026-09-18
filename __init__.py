@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Blend Swap Browser: search, download, and import Blend Swap assets from
-inside Blender using the official Blend Swap REST API.
+"""BlendSwap Browser: search, download, and import BlendSwap assets from
+inside Blender using the official BlendSwap REST API.
 
 Unofficial community add-on. You supply your own API key (bsk_live_...).
 Packaged as a Blender extension; metadata lives in blender_manifest.toml.
@@ -86,7 +86,7 @@ def _get_key(context):
 
 
 def _request(context, method, path, params=None, body=None):
-    """Call the Blend Swap API. Returns parsed JSON dict.
+    """Call the BlendSwap API. Returns parsed JSON dict.
 
     Raises RuntimeError with a friendly message on failure.
     """
@@ -197,7 +197,7 @@ def _download_file(url, dest_path):
 # ---------------------------------------------------------------------------
 # Local favorites
 #
-# Blend Swap's website has "Liked Assets" and "Collections", but the public
+# BlendSwap's website has "Liked Assets" and "Collections", but the public
 # API exposes neither (no endpoint, no /me field, no filter). Until it does,
 # favorites live in a JSON file on this machine and are never synced back to
 # the account. This tab is fully local: it reads and writes that file only,
@@ -302,7 +302,7 @@ def _run_search(context, page):
     scn = context.scene
     drop_any = lambda v: "" if v == ANY else v
     params = {
-        # Blend Swap's q is case-sensitive; normalize so "Rust" == "rust".
+        # BlendSwap's q is case-sensitive; normalize so "Rust" == "rust".
         "q": scn.blendswap_query.lower(),
         "license": drop_any(scn.blendswap_license),
         "type": drop_any(scn.blendswap_type),
@@ -325,8 +325,8 @@ def _run_search(context, page):
 
 class BLENDSWAP_OT_search(Operator):
     bl_idname = "blendswap.search"
-    bl_label = "Search Blend Swap"
-    bl_description = "Search the Blend Swap catalog"
+    bl_label = "Search BlendSwap"
+    bl_description = "Search the BlendSwap catalog"
 
     def execute(self, context):
         try:
@@ -364,7 +364,7 @@ class BLENDSWAP_OT_search_page(Operator):
 class BLENDSWAP_OT_my_uploads(Operator):
     bl_idname = "blendswap.my_uploads"
     bl_label = "My Uploads"
-    bl_description = "List the assets you've uploaded to Blend Swap"
+    bl_description = "List the assets you've uploaded to BlendSwap"
 
     def execute(self, context):
         scn = context.scene
@@ -515,7 +515,7 @@ class BLENDSWAP_OT_balance(Operator):
 
 class BLENDSWAP_OT_open_web(Operator):
     bl_idname = "blendswap.open_web"
-    bl_label = "Open on Blend Swap"
+    bl_label = "Open on BlendSwap"
     bl_description = "Open the selected asset's page in your browser"
 
     def execute(self, context):
@@ -549,7 +549,7 @@ class BLENDSWAP_OT_import(Operator):
         # Reuse a previously downloaded copy if we have one (no API, no credits).
         cached = _cached_file(context, r.asset_id)
         if cached:
-            print("[Blend Swap] '%s' by %s — reused from cache" % (r.title, r.author))
+            print("[BlendSwap] '%s' by %s — reused from cache" % (r.title, r.author))
             try:
                 self._import_path(cached)
             except Exception as e:
@@ -593,7 +593,7 @@ class BLENDSWAP_OT_import(Operator):
             "asset_type_label": r.asset_type, "url": r.web_url,
         })
         print(
-            "[Blend Swap] '%s' by %s — license: %s — %s"
+            "[BlendSwap] '%s' by %s — license: %s — %s"
             % (r.title, r.author, lic, r.web_url)
         )
 
@@ -712,11 +712,11 @@ class BLENDSWAP_UL_results(UIList):
 
 
 class BLENDSWAP_PT_panel(Panel):
-    bl_label = "Blend Swap"
+    bl_label = "BlendSwap"
     bl_idname = "BLENDSWAP_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "Blend Swap"
+    bl_category = "BlendSwap"
 
     def draw(self, context):
         layout = self.layout
@@ -776,7 +776,7 @@ class BLENDSWAP_PT_panel(Panel):
             # Be explicit that these are local-only until the API catches up.
             _draw_wrapped(
                 layout, context,
-                "Local favorites, this computer only. Blend Swap has no "
+                "Local favorites, this computer only. BlendSwap has no "
                 "likes or collections API yet.",
                 icon="INFO",
             )
@@ -839,7 +839,7 @@ class BlendSwapPrefs(AddonPreferences):
 
     api_key: StringProperty(
         name="API Key",
-        description="Your Blend Swap API key (starts with bsk_live_). "
+        description="Your BlendSwap API key (starts with bsk_live_). "
         "Create one at blendswap.com/dashboard/api",
         subtype="PASSWORD",
         default="",
@@ -896,7 +896,7 @@ def register():
     S.blendswap_mode = EnumProperty(
         name="Mode",
         items=[
-            ("SEARCH", "Search", "Search the Blend Swap catalog", "VIEWZOOM", 0),
+            ("SEARCH", "Search", "Search the BlendSwap catalog", "VIEWZOOM", 0),
             ("UPLOADS", "Mine", "Your uploaded assets", "USER", 1),
             ("FAVORITES", "Favorites", "Your saved favorites", "SOLO_ON", 2),
             ("DOWNLOADED", "Cached", "Assets you've already downloaded (local)", "DISK_DRIVE", 3),
@@ -913,7 +913,7 @@ def register():
     for cname, iname in MODE_COLL.values():
         setattr(S, cname, CollectionProperty(type=BlendSwapResult))
         setattr(S, iname, IntProperty(
-            name="Asset", description="Selected Blend Swap asset", default=0))
+            name="Asset", description="Selected BlendSwap asset", default=0))
     S.blendswap_page = IntProperty(default=1)
     S.blendswap_pages = IntProperty(default=1)
     S.blendswap_total = IntProperty(default=0)
