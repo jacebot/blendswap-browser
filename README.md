@@ -36,7 +36,7 @@ Online access must be on in `Preferences > System > Network`.
 
 ```
 blender --command extension build --source-dir . --output-dir dist
-blender --command extension validate dist/blendswap_browser-0.2.1.zip
+blender --command extension validate dist/blendswap_browser-0.2.2.zip
 ```
 
 Submit the built zip at [extensions.blender.org](https://extensions.blender.org).
