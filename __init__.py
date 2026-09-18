@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Blend Swap Browser: search, download, and import Blend Swap assets from
 inside Blender using the official Blend Swap REST API.
 

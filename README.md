@@ -71,4 +71,4 @@ many free downloads and credits you have left; search and browsing are free.
 
 ## License
 
-GPL-2.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later. See [LICENSE](LICENSE).
