@@ -8,14 +8,19 @@ your own API key.
 
 ## Features
 
-- **Search** the catalog with filters for type, format, license, and sort order.
+- **Search** the catalog with filters for type, format, license, and sort
+  order, with paging through all results.
 - **Download and import** the selected asset straight into the scene. Handles
   `.blend` (append or link), plus `.zip`, FBX, glTF, OBJ, and STL.
+- **Download cache**: every download is kept, so re-importing an asset costs no
+  credits and needs no network. The cache folder is configurable.
+- **Cached** tab lists everything you have already downloaded, for free
+  re-import.
 - **My Uploads** lists the assets you have uploaded, with their review state.
 - **Favorites** for one-click access to assets you care about (see the note
   below).
-- **Account readout** showing credits, free downloads left today, and daily
-  request usage.
+- **Account readout** showing credits, free downloads left today, daily request
+  usage, and when the daily limits reset.
 - Attribution (title, author, license, URL) is printed to the console on every
   import, to make Creative Commons credit easy.
 
@@ -46,7 +51,7 @@ blender --command extension build --source-dir . --output-dir dist
 Validate it before publishing:
 
 ```
-blender --command extension validate dist/blendswap_browser-0.2.0.zip
+blender --command extension validate dist/blendswap_browser-0.2.1.zip
 ```
 
 Submit the built zip at [extensions.blender.org](https://extensions.blender.org).

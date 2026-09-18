@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "blendswap_browser"
-version = "0.2.0"
+version = "0.2.1"
 name = "Blend Swap Browser"
 tagline = "Search, download and import Blend Swap assets"
 maintainer = "Jace Whitten"
