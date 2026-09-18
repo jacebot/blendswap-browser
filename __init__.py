@@ -8,7 +8,6 @@ Packaged as a Blender extension; metadata lives in blender_manifest.toml.
 
 import json
 import os
-import tempfile
 import zipfile
 import urllib.request
 import urllib.parse
@@ -138,6 +137,53 @@ def _request(context, method, path, params=None, body=None):
         raise RuntimeError("Network error: %s" % e.reason)
 
 
+def _cache_dir(context):
+    """Folder where downloaded assets are kept for reuse."""
+    prefs = context.preferences.addons[__name__].preferences
+    custom = (prefs.cache_dir or "").strip()
+    if custom:
+        return bpy.path.abspath(custom)
+    return bpy.utils.user_resource("DATAFILES", path="blendswap_cache", create=True)
+
+
+def _cached_file(context, asset_id):
+    """Return the path to a previously downloaded file for this asset, or None."""
+    folder = os.path.join(_cache_dir(context), str(asset_id))
+    if os.path.isdir(folder):
+        for name in sorted(os.listdir(folder)):
+            if name == "meta.json":
+                continue
+            full = os.path.join(folder, name)
+            if os.path.isfile(full):
+                return full
+    return None
+
+
+def _write_cache_meta(context, asset):
+    """Save a small metadata snapshot next to a cached file for the Downloaded tab."""
+    folder = os.path.join(_cache_dir(context), str(asset["id"]))
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "meta.json"), "w") as f:
+        json.dump(asset, f, indent=2)
+
+
+def _load_cached_rows(context):
+    """Fill the Downloaded tab from cached metadata. Local only, no API."""
+    scn = context.scene
+    scn.blendswap_dl_results.clear()
+    root = _cache_dir(context)
+    if os.path.isdir(root):
+        for aid in sorted(os.listdir(root), key=lambda s: s.isdigit() and int(s) or 0):
+            meta = os.path.join(root, aid, "meta.json")
+            if os.path.isfile(meta):
+                try:
+                    with open(meta) as f:
+                        _fill_row(scn.blendswap_dl_results.add(), json.load(f))
+                except (ValueError, OSError):
+                    pass
+    scn.blendswap_dl_index = 0
+
+
 def _download_file(url, dest_path):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=120) as resp, open(dest_path, "wb") as f:
@@ -186,6 +232,7 @@ MODE_COLL = {
     "SEARCH": ("blendswap_search_results", "blendswap_search_index"),
     "UPLOADS": ("blendswap_uploads_results", "blendswap_uploads_index"),
     "FAVORITES": ("blendswap_fav_results", "blendswap_fav_index"),
+    "DOWNLOADED": ("blendswap_dl_results", "blendswap_dl_index"),
 }
 
 
@@ -204,10 +251,12 @@ def _load_fav_rows(scn):
 
 
 def _on_mode_change(self, context):
-    # Favorites are local, so load them from cache on entry (no network).
-    # Search and Uploads keep whatever they last fetched.
+    # Local tabs load from disk on entry (no network). Search and Uploads keep
+    # whatever they last fetched.
     if self.blendswap_mode == "FAVORITES":
         _load_fav_rows(self)
+    elif self.blendswap_mode == "DOWNLOADED":
+        _load_cached_rows(context)
 
 
 def _fill_row(r, item, status=""):
@@ -347,6 +396,49 @@ class BLENDSWAP_OT_favorites(Operator):
         return {"FINISHED"}
 
 
+class BLENDSWAP_OT_downloaded(Operator):
+    bl_idname = "blendswap.downloaded"
+    bl_label = "Reload Downloaded"
+    bl_description = "Reload the list of cached (downloaded) assets (no network)"
+
+    def execute(self, context):
+        _load_cached_rows(context)
+        self.report({"INFO"}, "%d cached asset(s)" % len(context.scene.blendswap_dl_results))
+        return {"FINISHED"}
+
+
+class BLENDSWAP_OT_open_cache(Operator):
+    bl_idname = "blendswap.open_cache"
+    bl_label = "Open Cache Folder"
+    bl_description = "Open the download cache folder in your file browser"
+
+    def execute(self, context):
+        folder = _cache_dir(context)
+        os.makedirs(folder, exist_ok=True)
+        bpy.ops.wm.path_open(filepath=folder)
+        return {"FINISHED"}
+
+
+class BLENDSWAP_OT_remove_cached(Operator):
+    bl_idname = "blendswap.remove_cached"
+    bl_label = "Remove From Cache"
+    bl_description = "Delete this asset's cached download from disk"
+
+    def execute(self, context):
+        import shutil
+        scn = context.scene
+        coll, iname = _active(scn)
+        if not coll:
+            return {"CANCELLED"}
+        r = coll[getattr(scn, iname)]
+        folder = os.path.join(_cache_dir(context), str(r.asset_id))
+        if os.path.isdir(folder):
+            shutil.rmtree(folder, ignore_errors=True)
+        _load_cached_rows(context)
+        self.report({"INFO"}, "Removed '%s' from cache" % r.title)
+        return {"FINISHED"}
+
+
 class BLENDSWAP_OT_toggle_fav(Operator):
     bl_idname = "blendswap.toggle_fav"
     bl_label = "Toggle Favorite"
@@ -454,6 +546,18 @@ class BLENDSWAP_OT_import(Operator):
             return {"CANCELLED"}
         r = coll[getattr(scn, iname)]
 
+        # Reuse a previously downloaded copy if we have one (no API, no credits).
+        cached = _cached_file(context, r.asset_id)
+        if cached:
+            print("[Blend Swap] '%s' by %s — reused from cache" % (r.title, r.author))
+            try:
+                self._import_path(cached)
+            except Exception as e:
+                self.report({"ERROR"}, "Import failed: %s" % e)
+                return {"CANCELLED"}
+            self.report({"INFO"}, "Imported '%s' from cache (no download)" % r.title)
+            return {"FINISHED"}
+
         try:
             resp = _request(
                 context, "POST", "/downloads", body={"asset_id": r.asset_id}
@@ -467,10 +571,12 @@ class BLENDSWAP_OT_import(Operator):
             self.report({"ERROR"}, "No download URL returned.")
             return {"CANCELLED"}
 
+        # Save into the cache so future imports never re-download.
         file_meta = resp.get("file") or {}
         filename = file_meta.get("filename") or ("asset_%d.blend" % r.asset_id)
-        tmp_dir = tempfile.mkdtemp(prefix="blendswap_")
-        dest = os.path.join(tmp_dir, filename)
+        folder = os.path.join(_cache_dir(context), str(r.asset_id))
+        os.makedirs(folder, exist_ok=True)
+        dest = os.path.join(folder, filename)
 
         try:
             _download_file(dl_url, dest)
@@ -480,6 +586,12 @@ class BLENDSWAP_OT_import(Operator):
 
         # Attribution to console/info for CC compliance.
         lic = (resp.get("license") or {}).get("name", r.license)
+        # Record metadata so the Downloaded tab can list this later.
+        _write_cache_meta(context, {
+            "id": r.asset_id, "title": r.title,
+            "author": {"username": r.author}, "license": {"name": lic},
+            "asset_type_label": r.asset_type, "url": r.web_url,
+        })
         print(
             "[Blend Swap] '%s' by %s — license: %s — %s"
             % (r.title, r.author, lic, r.web_url)
@@ -494,15 +606,12 @@ class BLENDSWAP_OT_import(Operator):
         charged = resp.get("charged")
         remaining = resp.get("credits_remaining")
         # Keep the status readout current without a second API call.
-        scn = context.scene
         if remaining is not None:
             scn.blendswap_credits = int(remaining)
         if not charged and scn.blendswap_free_left > 0:
             scn.blendswap_free_left -= 1
-        note = ""
-        if charged:
-            note = " (10 credits, %s left)" % remaining
-        self.report({"INFO"}, "Imported '%s'%s" % (r.title, note))
+        note = " (10 credits, %s left)" % remaining if charged else ""
+        self.report({"INFO"}, "Imported '%s'%s — cached for reuse" % (r.title, note))
         return {"FINISHED"}
 
     def _import_path(self, path):
@@ -559,6 +668,15 @@ class BLENDSWAP_OT_import(Operator):
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
+
+def _until_utc_midnight():
+    """Human 'Xh Ym' until the next UTC midnight, when daily limits reset."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    nxt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    mins = int((nxt - now).total_seconds() // 60)
+    return "%dh %dm" % (mins // 60, mins % 60)
+
 
 def _draw_wrapped(layout, context, text, icon="NONE"):
     """Draw multi-line help text, word-wrapped to the current panel width.
@@ -629,6 +747,9 @@ class BLENDSWAP_PT_panel(Panel):
                 % (scn.blendswap_reqs_today, scn.blendswap_reqs_cap),
                 icon="TIME",
             )
+            # Free downloads and the daily request count reset at UTC midnight.
+            col.label(text="Resets in %s (UTC midnight)" % _until_utc_midnight(),
+                      icon="RECOVER_LAST")
         else:
             row.label(text="Account: click refresh", icon="FUND")
         row.operator("blendswap.balance", text="", icon="FILE_REFRESH")
@@ -650,13 +771,22 @@ class BLENDSWAP_PT_panel(Panel):
             col.operator("blendswap.search", icon="VIEWZOOM")
         elif mode == "UPLOADS":
             layout.operator("blendswap.my_uploads", icon="FILE_REFRESH")
-        else:  # FAVORITES
+        elif mode == "FAVORITES":
             layout.operator("blendswap.favorites", icon="FILE_REFRESH")
             # Be explicit that these are local-only until the API catches up.
             _draw_wrapped(
                 layout, context,
                 "Local favorites, this computer only. Blend Swap has no "
                 "likes or collections API yet.",
+                icon="INFO",
+            )
+        else:  # DOWNLOADED
+            row = layout.row(align=True)
+            row.operator("blendswap.downloaded", icon="FILE_REFRESH")
+            row.operator("blendswap.open_cache", text="", icon="FILE_FOLDER")
+            _draw_wrapped(
+                layout, context,
+                "Already downloaded. Re-importing these uses no credits.",
                 icon="INFO",
             )
 
@@ -690,6 +820,8 @@ class BLENDSWAP_PT_panel(Panel):
             fav_icon = "SOLO_ON" if r.favorited else "SOLO_OFF"
             row.operator("blendswap.toggle_fav", text="", icon=fav_icon)
             row.operator("blendswap.open_web", text="", icon="URL")
+            if mode == "DOWNLOADED":
+                row.operator("blendswap.remove_cached", text="", icon="TRASH")
 
 
 class BLENDSWAP_OT_open_prefs(Operator):
@@ -713,12 +845,23 @@ class BlendSwapPrefs(AddonPreferences):
         default="",
     )
 
+    cache_dir: StringProperty(
+        name="Download Cache",
+        description="Folder for downloaded assets. Leave empty to use Blender's "
+        "default data folder. Cached assets re-import without spending credits",
+        subtype="DIR_PATH",
+        default="",
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "api_key")
         layout.operator("wm.url_open", text="Get an API key", icon="URL").url = (
             "https://blendswap.com/dashboard/api"
         )
+        layout.separator()
+        layout.prop(self, "cache_dir")
+        layout.label(text="Empty uses: %s" % _cache_dir(context), icon="FILE_FOLDER")
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +874,9 @@ classes = (
     BLENDSWAP_OT_search_page,
     BLENDSWAP_OT_my_uploads,
     BLENDSWAP_OT_favorites,
+    BLENDSWAP_OT_downloaded,
+    BLENDSWAP_OT_open_cache,
+    BLENDSWAP_OT_remove_cached,
     BLENDSWAP_OT_toggle_fav,
     BLENDSWAP_OT_balance,
     BLENDSWAP_OT_open_web,
@@ -753,6 +899,7 @@ def register():
             ("SEARCH", "Search", "Search the Blend Swap catalog", "VIEWZOOM", 0),
             ("UPLOADS", "Mine", "Your uploaded assets", "USER", 1),
             ("FAVORITES", "Favorites", "Your saved favorites", "SOLO_ON", 2),
+            ("DOWNLOADED", "Cached", "Assets you've already downloaded (local)", "DISK_DRIVE", 3),
         ],
         default="SEARCH",
         update=_on_mode_change,
