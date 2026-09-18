@@ -154,8 +154,8 @@ def _download_file(url, dest_path):
 # Blend Swap's website has "Liked Assets" and "Collections", but the public
 # API exposes neither (no endpoint, no /me field, no filter). Until it does,
 # favorites live in a JSON file on this machine and are never synced back to
-# the account. Each entry keeps a cached snapshot of the asset so the list
-# still renders offline; it is refreshed from the API whenever possible.
+# the account. This tab is fully local: it reads and writes that file only,
+# and never calls the API.
 # ---------------------------------------------------------------------------
 
 def _fav_path():
@@ -180,10 +180,34 @@ def _fav_ids():
     return {int(x.get("id", 0)) for x in _load_favs()}
 
 
+# Each tab keeps its own result list and selection, so switching tabs never
+# disturbs another tab's contents.
+MODE_COLL = {
+    "SEARCH": ("blendswap_search_results", "blendswap_search_index"),
+    "UPLOADS": ("blendswap_uploads_results", "blendswap_uploads_index"),
+    "FAVORITES": ("blendswap_fav_results", "blendswap_fav_index"),
+}
+
+
+def _active(scn, mode=None):
+    """Return (collection, index_attr_name) for the given (or current) tab."""
+    cname, iname = MODE_COLL[mode or scn.blendswap_mode]
+    return getattr(scn, cname), iname
+
+
+def _load_fav_rows(scn):
+    """Fill the Favorites tab from the local cache. Never touches the API."""
+    scn.blendswap_fav_results.clear()
+    for fav in _load_favs():
+        _fill_row(scn.blendswap_fav_results.add(), fav)
+    scn.blendswap_fav_index = 0
+
+
 def _on_mode_change(self, context):
-    # Results are mode-specific; clear them so tabs don't show stale cross-tab data.
-    self.blendswap_results.clear()
-    self.blendswap_result_index = 0
+    # Favorites are local, so load them from cache on entry (no network).
+    # Search and Uploads keep whatever they last fetched.
+    if self.blendswap_mode == "FAVORITES":
+        _load_fav_rows(self)
 
 
 def _fill_row(r, item, status=""):
@@ -221,37 +245,70 @@ class BlendSwapResult(PropertyGroup):
 # Operators
 # ---------------------------------------------------------------------------
 
+PER_PAGE = 60  # results per page (API max is 100)
+
+
+def _run_search(context, page):
+    """Fetch one page of search results into the Search tab. Raises RuntimeError."""
+    scn = context.scene
+    drop_any = lambda v: "" if v == ANY else v
+    params = {
+        # Blend Swap's q is case-sensitive; normalize so "Rust" == "rust".
+        "q": scn.blendswap_query.lower(),
+        "license": drop_any(scn.blendswap_license),
+        "type": drop_any(scn.blendswap_type),
+        "format": drop_any(scn.blendswap_format),
+        "sort": scn.blendswap_sort,
+        "per_page": PER_PAGE,
+        "page": page,
+    }
+    payload = _request(context, "GET", "/assets", params=params)
+    scn.blendswap_search_results.clear()
+    for item in payload.get("data", []):
+        _fill_row(scn.blendswap_search_results.add(), item)
+    scn.blendswap_search_index = 0
+    pg = payload.get("pagination") or {}
+    scn.blendswap_page = pg.get("page", page)
+    scn.blendswap_pages = pg.get("pages", 1)
+    scn.blendswap_total = pg.get("count", len(scn.blendswap_search_results))
+    return len(scn.blendswap_search_results)
+
+
 class BLENDSWAP_OT_search(Operator):
     bl_idname = "blendswap.search"
     bl_label = "Search Blend Swap"
     bl_description = "Search the Blend Swap catalog"
 
     def execute(self, context):
-        scn = context.scene
-        drop_any = lambda v: "" if v == ANY else v
-        params = {
-            # Blend Swap's q is case-sensitive; normalize so "Rust" == "rust".
-            "q": scn.blendswap_query.lower(),
-            "license": drop_any(scn.blendswap_license),
-            "type": drop_any(scn.blendswap_type),
-            "format": drop_any(scn.blendswap_format),
-            "sort": scn.blendswap_sort,
-            "per_page": 25,
-        }
         try:
-            payload = _request(context, "GET", "/assets", params=params)
+            _run_search(context, page=1)  # a new search always starts at page 1
         except RuntimeError as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
+        scn = context.scene
+        self.report({"INFO"}, "%d of %d results (page %d/%d)" % (
+            len(scn.blendswap_search_results), scn.blendswap_total,
+            scn.blendswap_page, scn.blendswap_pages))
+        return {"FINISHED"}
 
-        scn.blendswap_results.clear()
-        for item in payload.get("data", []):
-            _fill_row(scn.blendswap_results.add(), item)
 
-        scn.blendswap_result_index = 0
-        n = len(scn.blendswap_results)
-        pg = payload.get("pagination") or {}
-        self.report({"INFO"}, "Found %d of %s results" % (n, pg.get("count", n)))
+class BLENDSWAP_OT_search_page(Operator):
+    bl_idname = "blendswap.search_page"
+    bl_label = "Page"
+    bl_description = "Go to the previous or next page of results"
+
+    delta: IntProperty(default=1)
+
+    def execute(self, context):
+        scn = context.scene
+        target = scn.blendswap_page + self.delta
+        if target < 1 or target > scn.blendswap_pages:
+            return {"CANCELLED"}
+        try:
+            _run_search(context, page=target)
+        except RuntimeError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 
@@ -268,36 +325,25 @@ class BLENDSWAP_OT_my_uploads(Operator):
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
 
-        scn.blendswap_results.clear()
+        scn.blendswap_uploads_results.clear()
         for item in payload.get("data", []):
             _fill_row(
-                scn.blendswap_results.add(), item,
+                scn.blendswap_uploads_results.add(), item,
                 status=item.get("review_state", item.get("status", "")),
             )
-        scn.blendswap_result_index = 0
-        self.report({"INFO"}, "You have %d upload(s)" % len(scn.blendswap_results))
+        scn.blendswap_uploads_index = 0
+        self.report({"INFO"}, "You have %d upload(s)" % len(scn.blendswap_uploads_results))
         return {"FINISHED"}
 
 
 class BLENDSWAP_OT_favorites(Operator):
     bl_idname = "blendswap.favorites"
-    bl_label = "Favorites"
-    bl_description = "Show your locally saved favorites (refreshed from the API)"
+    bl_label = "Reload Favorites"
+    bl_description = "Reload your local favorites (no network)"
 
     def execute(self, context):
-        scn = context.scene
-        favs = _load_favs()
-        scn.blendswap_results.clear()
-        for fav in favs:
-            # Try a fresh pull; fall back to the cached snapshot if offline.
-            try:
-                payload = _request(context, "GET", "/assets/%d" % int(fav["id"]))
-                item = payload.get("data", payload)
-            except (RuntimeError, KeyError, ValueError):
-                item = fav
-            _fill_row(scn.blendswap_results.add(), item)
-        scn.blendswap_result_index = 0
-        self.report({"INFO"}, "%d favorite(s)" % len(scn.blendswap_results))
+        _load_fav_rows(context.scene)
+        self.report({"INFO"}, "%d favorite(s)" % len(context.scene.blendswap_fav_results))
         return {"FINISHED"}
 
 
@@ -310,12 +356,13 @@ class BLENDSWAP_OT_toggle_fav(Operator):
 
     def execute(self, context):
         scn = context.scene
-        if not scn.blendswap_results:
+        coll, iname = _active(scn)
+        if not coll:
             return {"CANCELLED"}
-        idx = self.index if self.index >= 0 else scn.blendswap_result_index
-        if idx < 0 or idx >= len(scn.blendswap_results):
+        idx = self.index if self.index >= 0 else getattr(scn, iname)
+        if idx < 0 or idx >= len(coll):
             return {"CANCELLED"}
-        r = scn.blendswap_results[idx]
+        r = coll[idx]
         favs = _load_favs()
         ids = {int(x.get("id", 0)) for x in favs}
         if r.asset_id in ids:
@@ -332,6 +379,9 @@ class BLENDSWAP_OT_toggle_fav(Operator):
             r.favorited = True
             msg = "Added to favorites"
         _save_favs(favs)
+        # Keep the Favorites tab in sync when we just changed it there.
+        if scn.blendswap_mode == "FAVORITES":
+            _load_fav_rows(scn)
         self.report({"INFO"}, msg)
         return {"FINISHED"}
 
@@ -378,9 +428,10 @@ class BLENDSWAP_OT_open_web(Operator):
 
     def execute(self, context):
         scn = context.scene
-        if not scn.blendswap_results:
+        coll, iname = _active(scn)
+        if not coll:
             return {"CANCELLED"}
-        r = scn.blendswap_results[scn.blendswap_result_index]
+        r = coll[getattr(scn, iname)]
         if r.web_url:
             bpy.ops.wm.url_open(url=r.web_url)
         return {"FINISHED"}
@@ -397,10 +448,11 @@ class BLENDSWAP_OT_import(Operator):
 
     def execute(self, context):
         scn = context.scene
-        if not scn.blendswap_results:
+        coll, iname = _active(scn)
+        if not coll:
             self.report({"ERROR"}, "No results — search first.")
             return {"CANCELLED"}
-        r = scn.blendswap_results[scn.blendswap_result_index]
+        r = coll[getattr(scn, iname)]
 
         try:
             resp = _request(
@@ -608,13 +660,25 @@ class BLENDSWAP_PT_panel(Panel):
                 icon="INFO",
             )
 
+        # Each tab draws its own list + selection.
+        cname, iname = MODE_COLL[mode]
+        coll = getattr(scn, cname)
         layout.template_list(
-            "BLENDSWAP_UL_results", "", scn, "blendswap_results",
-            scn, "blendswap_result_index", rows=6,
+            "BLENDSWAP_UL_results", "", scn, cname, scn, iname, rows=6,
         )
 
-        if scn.blendswap_results:
-            r = scn.blendswap_results[scn.blendswap_result_index]
+        # Pagination for search results.
+        if mode == "SEARCH" and scn.blendswap_pages > 1:
+            row = layout.row(align=True)
+            prev = row.operator("blendswap.search_page", text="", icon="TRIA_LEFT")
+            prev.delta = -1
+            row.label(text="Page %d / %d  (%d total)" % (
+                scn.blendswap_page, scn.blendswap_pages, scn.blendswap_total))
+            nxt = row.operator("blendswap.search_page", text="", icon="TRIA_RIGHT")
+            nxt.delta = 1
+
+        if coll:
+            r = coll[getattr(scn, iname)]
             box = layout.box()
             box.label(text=r.title)
             info = "by %s · %s · %d dl" % (r.author, r.asset_type, r.downloads)
@@ -664,6 +728,7 @@ class BlendSwapPrefs(AddonPreferences):
 classes = (
     BlendSwapResult,
     BLENDSWAP_OT_search,
+    BLENDSWAP_OT_search_page,
     BLENDSWAP_OT_my_uploads,
     BLENDSWAP_OT_favorites,
     BLENDSWAP_OT_toggle_fav,
@@ -697,12 +762,14 @@ def register():
     S.blendswap_type = EnumProperty(name="Type", items=TYPE_ITEMS, default=ANY)
     S.blendswap_format = EnumProperty(name="Format", items=FORMAT_ITEMS, default=ANY)
     S.blendswap_sort = EnumProperty(name="Sort", items=SORT_ITEMS, default="newest")
-    S.blendswap_results = CollectionProperty(type=BlendSwapResult)
-    S.blendswap_result_index = IntProperty(
-        name="Asset",
-        description="Selected Blend Swap asset",
-        default=0,
-    )
+    # One result list + selection per tab (Search / Mine / Favorites).
+    for cname, iname in MODE_COLL.values():
+        setattr(S, cname, CollectionProperty(type=BlendSwapResult))
+        setattr(S, iname, IntProperty(
+            name="Asset", description="Selected Blend Swap asset", default=0))
+    S.blendswap_page = IntProperty(default=1)
+    S.blendswap_pages = IntProperty(default=1)
+    S.blendswap_total = IntProperty(default=0)
     S.blendswap_has_account = BoolProperty(default=False)
     S.blendswap_username = StringProperty(default="")
     S.blendswap_credits = IntProperty(default=0)
@@ -714,10 +781,12 @@ def register():
 
 def unregister():
     S = bpy.types.Scene
+    coll_attrs = [n for pair in MODE_COLL.values() for n in pair]
     for attr in (
         "blendswap_mode", "blendswap_query", "blendswap_license", "blendswap_type",
-        "blendswap_format", "blendswap_sort", "blendswap_results",
-        "blendswap_result_index",
+        "blendswap_format", "blendswap_sort",
+        "blendswap_page", "blendswap_pages", "blendswap_total",
+        *coll_attrs,
         "blendswap_has_account", "blendswap_username", "blendswap_credits",
         "blendswap_free_left", "blendswap_free_cap",
         "blendswap_reqs_today", "blendswap_reqs_cap",
