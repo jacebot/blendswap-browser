@@ -30,6 +30,7 @@ from bpy.types import (
 )
 
 API_BASE = "https://blendswap.com/api/v1"
+PW_URL = "https://plasticwool.com/blender"
 USER_AGENT = "BlendSwapBrowser/0.1 (Blender add-on)"
 
 # The "Any" option means "no filter". Its identifier must be a non-empty
@@ -823,6 +824,10 @@ class BLENDSWAP_PT_panel(Panel):
             if mode == "DOWNLOADED":
                 row.operator("blendswap.remove_cached", text="", icon="TRASH")
 
+        layout.separator()
+        layout.operator("wm.url_open", text="by Plastic Wool",
+                        icon="URL", emboss=False).url = PW_URL
+
 
 class BLENDSWAP_OT_open_prefs(Operator):
     bl_idname = "blendswap.open_prefs"
@@ -862,6 +867,9 @@ class BlendSwapPrefs(AddonPreferences):
         layout.separator()
         layout.prop(self, "cache_dir")
         layout.label(text="Empty uses: %s" % _cache_dir(context), icon="FILE_FOLDER")
+        layout.separator()
+        layout.operator("wm.url_open", text="More free tools at plasticwool.com",
+                        icon="URL").url = PW_URL
 
 
 # ---------------------------------------------------------------------------

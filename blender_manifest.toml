@@ -1,13 +1,13 @@
 schema_version = "1.0.0"
 
 id = "blendswap_browser"
-version = "0.2.2"
+version = "0.3.0"
 name = "BlendSwap Browser"
 tagline = "Search, download and import BlendSwap assets"
 maintainer = "Jace Whitten"
 type = "add-on"
 
-website = "https://github.com/jacebot/blendswap-browser"
+website = "https://plasticwool.com/blender"
 
 tags = ["Import-Export"]
 
