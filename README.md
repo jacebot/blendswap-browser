@@ -23,20 +23,32 @@ Unofficial community add-on, not affiliated with BlendSwap. Bring your own API k
 
 Blender 4.2 or newer.
 
-1. Download the `.zip` (or build it, below).
-2. Drag it onto Blender, or use `Preferences > Get Extensions > Install from
-   Disk`, then enable BlendSwap Browser.
-3. Get an API key at [blendswap.com/dashboard/api](https://blendswap.com/dashboard/api)
+**Recommended: add the Plastic Wool repository** so it installs in one click
+and updates itself.
+
+1. `Preferences > Get Extensions > Repositories > + > Add Remote Repository`.
+2. Paste `https://plasticwool.com/blender/index.json` and tick *Check for
+   Updates on Startup*.
+3. Search for BlendSwap Browser and install.
+
+Or download the `.zip` from [Releases](https://github.com/jacebot/blendswap-browser/releases)
+and drag it onto Blender.
+
+Then:
+
+1. Get an API key at [blendswap.com/dashboard/api](https://blendswap.com/dashboard/api)
    and paste it into the extension preferences.
-4. Open the viewport sidebar (`N`) and pick the BlendSwap tab.
+2. Open the viewport sidebar (`N`) and pick the BlendSwap tab.
 
 Online access must be on in `Preferences > System > Network`.
+
+More free Blender tools at [plasticwool.com/blender](https://plasticwool.com/blender).
 
 ## Build
 
 ```
 blender --command extension build --source-dir . --output-dir dist
-blender --command extension validate dist/blendswap_browser-0.2.2.zip
+blender --command extension validate dist/blendswap_browser-0.3.0.zip
 ```
 
 Submit the built zip at [extensions.blender.org](https://extensions.blender.org).
